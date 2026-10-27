@@ -23,14 +23,28 @@ def _conn():
     return psycopg.connect(DB_URL)
 
 
-@app.get("/health")
-def health():
+@app.get("/livez")
+def livez():
+    """Liveness: is the process able to serve at all? Deliberately does NOT touch the DB.
+    If it did, a DB blip would make the orchestrator restart every replica at once."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    """Readiness: can this replica serve real traffic? Failing it takes the replica out
+    of the load balancer without restarting it."""
     try:
-        with _conn() as conn:
+        with psycopg.connect(DB_URL, connect_timeout=2) as conn:
             conn.execute("SELECT 1")
         return {"status": "ok"}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=f"db unavailable: {exc}")
+    except Exception:  # noqa: BLE001
+        # Don't echo the driver error to callers: it can leak hostnames/usernames.
+        raise HTTPException(status_code=503, detail="db unavailable")
+
+
+# Kept for backwards compatibility with existing callers; same semantics as before.
+app.add_api_route("/health", readyz, methods=["GET"])
 
 
 @app.get("/orders")
