@@ -69,8 +69,8 @@ jobs:
       - name: Start current app version (simulates live traffic during the migration)
         run: |
           docker run -d --name app --network host -e DB_URL="$DB_URL" "$IMAGE"
-          for i in $(seq 1 30); do curl -fsS localhost:8000/health && break; sleep 1; done
-          curl -fsS localhost:8000/health
+          for i in $(seq 1 30); do curl -fsS localhost:8000/readyz && break; sleep 1; done
+          curl -fsS localhost:8000/readyz
 
       - name: Run migrations with live writes in parallel
         run: |
@@ -92,7 +92,7 @@ jobs:
 
       - name: Smoke test app after migration
         run: |
-          curl -fsS localhost:8000/health
+          curl -fsS localhost:8000/readyz
           curl -fsS -X POST localhost:8000/orders -H 'content-type: application/json' -d '{"amount": 1, "status": "shipped"}'
           psql -h localhost -U app -d app -c "SELECT count(*) AS orders, count(*) FILTER (WHERE status_id IS NULL) AS null_status_id FROM orders;"
 

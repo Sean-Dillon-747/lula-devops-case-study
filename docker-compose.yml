@@ -19,7 +19,38 @@ services:
       timeout: 3s
       retries: 10
 
-  # TODO (you): add your containerised `app` service here.
-  #   - build from your Dockerfile
-  #   - set DB_URL to point at the `db` service (host: db)
-  #   - wait for db to be healthy (depends_on condition: service_healthy)
+  # One-shot migration job: same image as the app, runs before the app starts.
+  # Mirrors production, where this is an Azure Container Apps Job / k8s Job that
+  # must succeed before the new revision takes traffic.
+  migrate:
+    build: .
+    image: orders-api:local
+    command: ["python", "migrations/migrate.py", "up"]
+    environment:
+      DB_URL: postgresql://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    image: orders-api:local
+    environment:
+      DB_URL: postgresql://app:app@db:5432/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Runtime hardening: immutable filesystem, no Linux capabilities, no privilege escalation.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

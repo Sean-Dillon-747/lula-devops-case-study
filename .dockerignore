@@ -1,0 +1,15 @@
+# Keep the build context small and secrets/VCS out of image layers.
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.env
+*.env
+tests
+terraform
+scripts
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
