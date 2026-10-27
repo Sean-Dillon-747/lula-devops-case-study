@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 """
 
 
+class MigrationFailed(Exception):
+    """Raised after a failure has been logged and recorded in schema_migrations."""
+
+
 @dataclass
 class Migration:
     version: str
@@ -177,7 +181,7 @@ def apply(conn, mig: Migration) -> None:
         log(f"FAILED {mig.version}: {exc}")
         log("history row marked 'failed'. Run `verify.py` to see what actually landed, "
             "fix the cause, then rerun `up` (every step is idempotent).")
-        raise
+        raise MigrationFailed from exc
 
 
 def revert(conn, mig: Migration) -> None:
@@ -276,7 +280,7 @@ def main() -> int:
                 cmd_up(conn, migrations, args.to)
             else:
                 cmd_down(conn, migrations)
-        except psycopg.Error:
+        except MigrationFailed:
             return 1  # already logged and recorded in schema_migrations
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (ADVISORY_LOCK_ID,))
