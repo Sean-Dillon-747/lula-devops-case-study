@@ -37,13 +37,6 @@ def sql(query, *params):
         return cur.fetchall() if cur.description else None
 
 
-@pytest.fixture(autouse=True)
-def baseline():
-    with psycopg.connect(DB_URL, autocommit=True) as conn:
-        conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-        conn.execute((ROOT / "schema.sql").read_text())
-
-
 @pytest.fixture
 def old_app():
     """The app exactly as it is today: only knows about the `status` text column."""
