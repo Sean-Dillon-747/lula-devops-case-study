@@ -100,6 +100,14 @@ jobs:
         if: always()
         run: docker logs app || true
 
+  # Alert rules are code too: a typo here means a silent pager.
+  alerts-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check rules
+        run: docker run --rm -v "$PWD/observability:/o:ro" --entrypoint promtool prom/prometheus:v2.54.1 check rules /o/alerts.yml
+
   # Infrastructure as Code - validate only (no Azure account, no apply).
   iac-validate:
     runs-on: ubuntu-latest

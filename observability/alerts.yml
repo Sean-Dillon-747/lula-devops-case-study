@@ -1,0 +1,48 @@
+# Prometheus alerting rules (works as-is with Azure Monitor managed Prometheus).
+#
+# THE ONE ALERT WE SET: customers are failing to place/read orders faster than our
+# error budget allows. It's symptom-based (what users feel), not cause-based.
+#
+#   SLO: 99.5% of /orders requests succeed over 30 days -> error budget 0.5%.
+#   Fast-burn, multi-window (Google SRE workbook): page when the 1h error ratio is
+#   above 14.4x budget (i.e. we'd burn 2% of the monthly budget in 1 hour) AND the 5m
+#   window agrees, so it fires quickly on a real outage but resets quickly once it's
+#   fixed and doesn't fire on a single blip.
+#   This catches a bad deploy or a migration that breaks writes, which is exactly the
+#   risk this pod carries.
+#
+# THE ALERT WE DELIBERATELY DO NOT SET: "CPU > 80%" / "container restarted once".
+#   They're causes, not symptoms: CPU at 85% with healthy latency is a well-utilised
+#   service, and one restart that the orchestrator heals hurts no one. They page people
+#   at 3am for nothing, which trains them to ignore pages. If CPU saturation ever does
+#   hurt users, the burn-rate alert fires anyway. Capacity trends belong on a
+#   dashboard, not a pager.
+groups:
+  - name: orders-api-slo
+    rules:
+      - record: orders:error_ratio:rate5m
+        expr: |
+          sum(rate(http_requests_total{route="/orders", status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{route="/orders"}[5m]))
+      - record: orders:error_ratio:rate1h
+        expr: |
+          sum(rate(http_requests_total{route="/orders", status=~"5.."}[1h]))
+          /
+          sum(rate(http_requests_total{route="/orders"}[1h]))
+
+      - alert: OrdersErrorBudgetFastBurn
+        expr: |
+          orders:error_ratio:rate1h > (14.4 * 0.005)
+          and
+          orders:error_ratio:rate5m > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: page
+          team: rnd-platform
+        annotations:
+          summary: "Orders API burning error budget at >14x (5xx ratio {{ $value | humanizePercentage }})"
+          description: >-
+            More than 7.2% of /orders requests are failing. Check the last deploy and
+            migration first: `python migrations/migrate.py status` and
+            `python migrations/verify.py`, then app logs filtered by request_id.
