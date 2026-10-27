@@ -1,0 +1,5 @@
+resource_group_name = "rg-orders-dev"
+environment         = "dev"
+acr_id              = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-platform/providers/Microsoft.ContainerRegistry/registries/acrrndpod"
+acr_login_server    = "acrrndpod.azurecr.io"
+# image is passed by the pipeline: -var "image=acrrndpod.azurecr.io/orders-api@sha256:<digest>"

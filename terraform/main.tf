@@ -1,23 +1,50 @@
-# TODO (you): express the service's Azure footprint as Terraform.
-#
-# We're reading your HCL - structure, module/variable boundaries, and how you
-# reason about state and secrets - NOT a running environment. `terraform validate`
-# only; no Azure account, no `apply`.
-#
-# A sensible minimal footprint for the orders service:
-#   - a resource group (azurerm_resource_group)
-#   - compute to run the container (azurerm_container_app + environment, or AKS)
-#   - a managed database (azurerm_postgresql_flexible_server) - think about how
-#     the migration job connects to it
-#   - Key Vault (azurerm_key_vault) for the DB connection string / secrets, and
-#     how the app reads them (managed identity vs a secret baked into config)
-#
-# Keep it small and well-reasoned. One or two resources wired correctly, with
-# variables and a clear state/secrets story, beats a broad half-built sketch.
-#
-# Example starting point (delete this comment and write real HCL):
-#
-# resource "azurerm_resource_group" "main" {
-#   name     = var.resource_group_name
-#   location = var.location
-# }
+# Root module = the shared "landing zone" for the R&D pod: resource group, logging,
+# and the Container Apps environment. Each service the pod ships is one call to a
+# service module, so the next idea gets the same safe defaults for free.
+
+locals {
+  tags = merge(var.tags, {
+    environment = var.environment
+    managed_by  = "terraform"
+    owner       = "rnd-platform"
+  })
+}
+
+resource "azurerm_resource_group" "main" {
+  name     = var.resource_group_name
+  location = var.location
+  tags     = local.tags
+}
+
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "log-rnd-${var.environment}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = local.tags
+}
+
+resource "azurerm_container_app_environment" "main" {
+  name                       = "cae-rnd-${var.environment}"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  logs_destination           = "log-analytics" # stdout JSON logs -> Log Analytics
+  tags                       = local.tags
+}
+
+module "orders_service" {
+  source = "./modules/orders_service"
+
+  name                         = "orders"
+  environment                  = var.environment
+  resource_group_name          = azurerm_resource_group.main.name
+  location                     = azurerm_resource_group.main.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  image                        = var.image
+  acr_id                       = var.acr_id
+  acr_login_server             = var.acr_login_server
+  db_password_version          = var.db_password_version
+  tags                         = local.tags
+}

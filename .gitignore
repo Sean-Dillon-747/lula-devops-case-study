@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 .env
 .venv/
+
+# Terraform: never commit state (it can contain sensitive values) or local caches.
+# .terraform.lock.hcl IS committed: it pins provider checksums.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
