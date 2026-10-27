@@ -1,13 +1,22 @@
-# Skeleton CI pipeline — fill in the steps.
-# On push, GitHub runs this on free runners (no cloud account needed). The `postgres`
-# service below is your ephemeral migration target — this CI run is the "deploy".
+# CI/CD: build -> test migration safety -> "deploy" (migrate the ephemeral Postgres) -> smoke test.
+# The postgres service container stands in for the production database.
 name: ci
 
-on: [push]
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test-migrate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,14 +33,72 @@ jobs:
           --health-retries 10
     env:
       DB_URL: postgresql://app:app@localhost:5432/app
+      PGPASSWORD: app
+      IMAGE: orders-api:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
-      # TODO (you):
-      # - Build the Docker image.
-      # - Run your tests.
-      # - Run your migration against the postgres service (DB_URL above).
-      # - Bonus: show the expand/contract rollout and/or the mid-run-failure handling.
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Each test resets the DB to the baseline and exercises one safety property:
+      # old app works at every stage, crash mid-backfill -> detect -> recover forward,
+      # unknown statuses block NOT NULL, concurrent runner refused, full down/up.
+      - name: Migration safety tests
+        run: pytest -v tests
+
+      # ---- "Deploy": what a real release does against the production database ----
+      - name: Reset DB to the production-like baseline
+        run: |
+          psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+          psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -f schema.sql
+          psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -c "
+            INSERT INTO orders (amount, status)
+            SELECT (random()*1000)::numeric(12,2), (ARRAY['pending','paid','shipped'])[1 + floor(random()*3)::int]
+            FROM generate_series(1, 50000);"
+
+      - name: Start current app version (simulates live traffic during the migration)
+        run: |
+          docker run -d --name app --network host -e DB_URL="$DB_URL" "$IMAGE"
+          for i in $(seq 1 30); do curl -fsS localhost:8000/health && break; sleep 1; done
+          curl -fsS localhost:8000/health
+
+      - name: Run migrations with live writes in parallel
+        run: |
+          ( for i in $(seq 1 200); do
+              curl -fsS -X POST localhost:8000/orders -H 'content-type: application/json' \
+                -d '{"amount": 10, "status": "paid"}' > /dev/null || echo "WRITE FAILED" >> writes.log
+            done ) &
+          WRITER=$!
+          python migrations/migrate.py up
+          wait $WRITER
+          if [ -f writes.log ]; then cat writes.log; echo "::error::app writes failed during migration"; exit 1; fi
+        env:
+          BACKFILL_BATCH_SIZE: "1000"
+
+      - name: Verify schema matches history
+        run: |
+          python migrations/migrate.py status
+          python migrations/verify.py
+
+      - name: Smoke test app after migration
+        run: |
+          curl -fsS localhost:8000/health
+          curl -fsS -X POST localhost:8000/orders -H 'content-type: application/json' -d '{"amount": 1, "status": "shipped"}'
+          psql -h localhost -U app -d app -c "SELECT count(*) AS orders, count(*) FILTER (WHERE status_id IS NULL) AS null_status_id FROM orders;"
+
+      - name: App logs
+        if: always()
+        run: docker logs app || true
 
   # Infrastructure as Code - validate only (no Azure account, no apply).
   iac-validate:
