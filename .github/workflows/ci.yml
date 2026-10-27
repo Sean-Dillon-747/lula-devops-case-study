@@ -1,0 +1,47 @@
+# Skeleton CI pipeline — fill in the steps.
+# On push, GitHub runs this on free runners (no cloud account needed). The `postgres`
+# service below is your ephemeral migration target — this CI run is the "deploy".
+name: ci
+
+on: [push]
+
+jobs:
+  build-test-migrate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DB_URL: postgresql://app:app@localhost:5432/app
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO (you):
+      # - Build the Docker image.
+      # - Run your tests.
+      # - Run your migration against the postgres service (DB_URL above).
+      # - Bonus: show the expand/contract rollout and/or the mid-run-failure handling.
+
+  # Infrastructure as Code - validate only (no Azure account, no apply).
+  iac-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt
+        run: terraform -chdir=terraform fmt -check -recursive
+      - name: Terraform init (no backend)
+        run: terraform -chdir=terraform init -backend=false
+      - name: Terraform validate
+        run: terraform -chdir=terraform validate

@@ -1,0 +1,24 @@
+# Provided: Postgres, pre-seeded with the baseline schema.
+# You add the `app` service once you've written the Dockerfile, so that
+# `docker compose up` brings up the whole thing.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # TODO (you): add your containerised `app` service here.
+  #   - build from your Dockerfile
+  #   - set DB_URL to point at the `db` service (host: db)
+  #   - wait for db to be healthy (depends_on condition: service_healthy)
